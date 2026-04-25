@@ -16,6 +16,8 @@ export interface Municipality {
   region_name: string | null
   latitude: number | null
   longitude: number | null
+  area_sq_km?: number | null
+  population?: number | null
 }
 
 export interface PopulationTimeseriesPoint {
@@ -32,6 +34,7 @@ export interface PopulationTimeseries {
 export interface PopulationRankingItem {
   municipality_id: number
   municipality_name: string
+  region_id: number
   region_name: string
   population_start: number | null
   population_end: number | null
@@ -86,11 +89,12 @@ export const fetchMunicipalities = (params: {
   limit?: number
 }) => api.get<Municipality[]>('/municipalities', { params }).then(r => r.data)
 
-export const fetchMunicipalitiesByRegion = (regionId: number) =>
-  api.get<Municipality[]>(`/regions/${regionId}/municipalities`).then(r => r.data)
+export const fetchMunicipalitiesByRegion = (regionId: number, params?: { year?: number }) =>
+  api.get<Municipality[]>(`/regions/${regionId}/municipalities`, { params }).then(r => r.data)
 
 export const fetchPopulationTimeseries = (params: {
   municipality_id: number[]
+  region_id?: number
   year_from?: number
   year_to?: number
 }) => api.get<PopulationTimeseries[]>('/population/timeseries', { params, paramsSerializer: { indexes: null } }).then(r => r.data)
@@ -110,6 +114,7 @@ export const fetchPopulationSummary = (params: {
 
 export const fetchDemographicsTimeseries = (params: {
   municipality_id: number[]
+  region_id?: number
   year_from?: number
   year_to?: number
 }) => api.get<DemographicsTimeseries[]>('/demographics/timeseries', { params, paramsSerializer: { indexes: null } }).then(r => r.data)
@@ -122,7 +127,10 @@ export const fetchDemographicsSummary = (params: {
 export const fetchMapGeoJSON = (params: {
   level?: 'region' | 'municipality'
   region_id?: number
+  metric?: 'population' | 'change_percent'
   year?: number
+  year_from?: number
+  year_to?: number
 }) => api.get('/map/geojson', { params }).then(r => r.data)
 
 export const fetchMapDensity = (params: { year?: number }) =>

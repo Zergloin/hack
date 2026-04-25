@@ -15,6 +15,7 @@ class PopulationTimeseries(BaseModel):
 class PopulationRankingItem(BaseModel):
     municipality_id: int
     municipality_name: str
+    region_id: int
     region_name: str
     population_start: int | None = None
     population_end: int | None = None

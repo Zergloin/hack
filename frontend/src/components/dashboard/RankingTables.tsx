@@ -44,7 +44,7 @@ const columns = [
 ]
 
 export default function RankingTables() {
-  const { regionId, yearFrom, yearTo } = useFilterStore()
+  const { regionId, yearFrom, yearTo, setRegionId, setMunicipalityId } = useFilterStore()
 
   const { data: growth = [], isLoading: loadingGrowth } = useQuery({
     queryKey: ['rankings-growth', regionId, yearFrom, yearTo],
@@ -86,6 +86,13 @@ export default function RankingTables() {
             size="small"
             rowKey="municipality_id"
             scroll={{ x: 500 }}
+            onRow={(record) => ({
+              onClick: () => {
+                setRegionId(record.region_id)
+                setMunicipalityId(record.municipality_id)
+              },
+              style: { cursor: 'pointer' },
+            })}
           />
         </Card>
       </Col>
@@ -103,6 +110,13 @@ export default function RankingTables() {
             size="small"
             rowKey="municipality_id"
             scroll={{ x: 500 }}
+            onRow={(record) => ({
+              onClick: () => {
+                setRegionId(record.region_id)
+                setMunicipalityId(record.municipality_id)
+              },
+              style: { cursor: 'pointer' },
+            })}
           />
         </Card>
       </Col>

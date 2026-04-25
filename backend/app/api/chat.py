@@ -29,5 +29,5 @@ async def ai_insight(
     request: AIInsightRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    insight = await get_ai_insight(db, request.municipality_id, request.region_id)
+    insight = await get_ai_insight(db, request.municipality_id, request.region_id, request.year)
     return {"insight": insight}

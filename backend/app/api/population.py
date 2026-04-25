@@ -29,11 +29,55 @@ async def population_timeseries(
     if municipality_id:
         muni_ids = municipality_id
     elif region_id:
-        q = select(Municipality.id).where(Municipality.region_id == region_id)
-        res = await db.execute(q)
-        muni_ids = [r[0] for r in res.all()]
+        region = await db.get(Region, region_id)
+        if not region:
+            return []
+
+        query = (
+            select(PopulationRecord.year, func.sum(PopulationRecord.population))
+            .join(Municipality)
+            .where(
+                Municipality.region_id == region_id,
+                PopulationRecord.year >= year_from,
+                PopulationRecord.year <= year_to,
+            )
+            .group_by(PopulationRecord.year)
+            .order_by(PopulationRecord.year)
+        )
+        res = await db.execute(query)
+        rows = res.all()
+        return [
+            PopulationTimeseries(
+                municipality_id=region.id,
+                municipality_name=region.name,
+                data=[
+                    PopulationTimeseriesPoint(year=year, population=population)
+                    for year, population in rows
+                ],
+            )
+        ]
     else:
-        return []
+        query = (
+            select(PopulationRecord.year, func.sum(PopulationRecord.population))
+            .where(
+                PopulationRecord.year >= year_from,
+                PopulationRecord.year <= year_to,
+            )
+            .group_by(PopulationRecord.year)
+            .order_by(PopulationRecord.year)
+        )
+        res = await db.execute(query)
+        rows = res.all()
+        return [
+            PopulationTimeseries(
+                municipality_id=0,
+                municipality_name="Россия",
+                data=[
+                    PopulationTimeseriesPoint(year=year, population=population)
+                    for year, population in rows
+                ],
+            )
+        ]
 
     for mid in muni_ids[:20]:
         muni = await db.get(Municipality, mid)
@@ -87,6 +131,7 @@ async def population_rankings(
         select(
             Municipality.id,
             Municipality.name,
+            Region.id.label("region_id"),
             Region.name.label("region_name"),
             pop_start.c.population.label("pop_start"),
             pop_end.c.population.label("pop_end"),
@@ -119,11 +164,12 @@ async def population_rankings(
         PopulationRankingItem(
             municipality_id=r[0],
             municipality_name=r[1],
-            region_name=r[2],
-            population_start=r[3],
-            population_end=r[4],
-            change_absolute=(r[4] - r[3]) if r[3] and r[4] else None,
-            change_percent=round((r[4] - r[3]) / r[3] * 100, 2) if r[3] and r[4] and r[3] != 0 else None,
+            region_id=r[2],
+            region_name=r[3],
+            population_start=r[4],
+            population_end=r[5],
+            change_absolute=(r[5] - r[4]) if r[4] and r[5] else None,
+            change_percent=round((r[5] - r[4]) / r[4] * 100, 2) if r[4] and r[5] and r[4] != 0 else None,
         )
         for r in rows
     ]

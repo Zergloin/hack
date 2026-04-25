@@ -4,6 +4,7 @@ Exports to PDF (WeasyPrint) and DOCX (python-docx).
 """
 
 import io
+from textwrap import dedent
 
 import markdown
 from sqlalchemy import func, select
@@ -15,6 +16,10 @@ from app.models.population import PopulationRecord
 from app.models.region import Region
 from app.models.report import Report
 from app.schemas.report import ReportGenerateRequest
+
+
+class PDFExportError(RuntimeError):
+    """Raised when PDF export is unavailable or fails."""
 
 
 async def _gather_context(db: AsyncSession, request: ReportGenerateRequest) -> str:
@@ -142,31 +147,104 @@ async def generate_report(db: AsyncSession, request: ReportGenerateRequest) -> R
     return report
 
 
-def export_pdf(html_content: str) -> bytes:
-    """Export HTML content to PDF using WeasyPrint."""
-    try:
-        from weasyprint import HTML
+def _build_pdf_html(html_content: str | None, markdown_content: str | None = None) -> str:
+    body_html = html_content
+    if not body_html and markdown_content:
+        body_html = markdown.markdown(markdown_content, extensions=["tables", "fenced_code"])
+    if not body_html:
+        body_html = "<p>Отчёт пуст.</p>"
 
-        styled_html = f"""
+    return dedent(
+        f"""
         <!DOCTYPE html>
-        <html>
+        <html lang="ru">
         <head>
             <meta charset="utf-8">
             <style>
-                body {{ font-family: 'DejaVu Sans', Arial, sans-serif; margin: 40px; line-height: 1.6; }}
-                h1 {{ color: #1a365d; border-bottom: 2px solid #2b6cb0; padding-bottom: 10px; }}
-                h2 {{ color: #2b6cb0; margin-top: 30px; }}
-                table {{ border-collapse: collapse; width: 100%; margin: 15px 0; }}
-                th, td {{ border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }}
-                th {{ background-color: #edf2f7; }}
+                @page {{ size: A4; margin: 20mm 16mm; }}
+                body {{
+                    font-family: 'DejaVu Sans', Arial, sans-serif;
+                    color: #1a202c;
+                    line-height: 1.55;
+                    font-size: 11pt;
+                }}
+                h1 {{
+                    color: #1a365d;
+                    border-bottom: 2px solid #2b6cb0;
+                    padding-bottom: 10px;
+                    margin-bottom: 18px;
+                }}
+                h2 {{
+                    color: #2b6cb0;
+                    margin-top: 26px;
+                    margin-bottom: 10px;
+                }}
+                h3 {{
+                    color: #2d3748;
+                    margin-top: 18px;
+                    margin-bottom: 8px;
+                }}
+                p, ul, ol {{
+                    margin: 0 0 12px 0;
+                }}
+                table {{
+                    border-collapse: collapse;
+                    width: 100%;
+                    margin: 15px 0;
+                    font-size: 10pt;
+                }}
+                th, td {{
+                    border: 1px solid #e2e8f0;
+                    padding: 8px 10px;
+                    text-align: left;
+                    vertical-align: top;
+                }}
+                th {{
+                    background-color: #edf2f7;
+                    font-weight: 600;
+                }}
+                code {{
+                    font-family: 'DejaVu Sans Mono', 'Courier New', monospace;
+                    background: #f7fafc;
+                    padding: 1px 4px;
+                    border-radius: 4px;
+                }}
+                pre {{
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                    background: #f7fafc;
+                    padding: 12px;
+                    border-radius: 8px;
+                    border: 1px solid #e2e8f0;
+                }}
             </style>
         </head>
-        <body>{html_content}</body>
+        <body>{body_html}</body>
         </html>
         """
-        return HTML(string=styled_html).write_pdf()
-    except Exception:
-        return b"PDF generation requires WeasyPrint. Install system dependencies."
+    ).strip()
+
+
+def export_pdf(html_content: str | None, markdown_content: str | None = None) -> bytes:
+    """Export HTML content to PDF using WeasyPrint."""
+    try:
+        from weasyprint import HTML
+    except Exception as exc:
+        raise PDFExportError(
+            "PDF export is unavailable: WeasyPrint is not installed in the backend environment."
+        ) from exc
+
+    styled_html = _build_pdf_html(html_content, markdown_content)
+
+    try:
+        pdf_bytes = HTML(string=styled_html, base_url=".").write_pdf()
+    except Exception as exc:
+        raise PDFExportError(f"PDF export failed: {exc}") from exc
+
+    if not pdf_bytes or not pdf_bytes.startswith(b"%PDF"):
+        raise PDFExportError("PDF export failed: generated file is not a valid PDF.")
+
+    return pdf_bytes
 
 
 def export_docx(markdown_content: str) -> bytes:

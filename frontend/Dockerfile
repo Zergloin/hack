@@ -1,7 +1,9 @@
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+ARG VITE_YANDEX_MAPS_API_KEY=
+ENV VITE_YANDEX_MAPS_API_KEY=$VITE_YANDEX_MAPS_API_KEY
+COPY package*.json ./
+RUN npm ci
 COPY . .
 RUN npm run build
 

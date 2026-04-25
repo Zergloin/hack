@@ -3,6 +3,7 @@ import api from './client'
 export const getAIInsight = (params: {
   municipality_id?: number | null
   region_id?: number | null
+  year?: number | null
 }) => api.post<{ insight: string }>('/chat/insight', params).then(r => r.data)
 
 export async function* streamChat(message: string, threadId?: string) {

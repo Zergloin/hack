@@ -8,6 +8,7 @@ interface FilterState {
   setRegionId: (id: number | null) => void
   setMunicipalityId: (id: number | null) => void
   setYearRange: (from: number, to: number) => void
+  resetFilters: () => void
 }
 
 export const useFilterStore = create<FilterState>((set) => ({
@@ -18,4 +19,5 @@ export const useFilterStore = create<FilterState>((set) => ({
   setRegionId: (id) => set({ regionId: id, municipalityId: null }),
   setMunicipalityId: (id) => set({ municipalityId: id }),
   setYearRange: (from, to) => set({ yearFrom: from, yearTo: to }),
+  resetFilters: () => set({ regionId: null, municipalityId: null, yearFrom: 2010, yearTo: 2022 }),
 }))

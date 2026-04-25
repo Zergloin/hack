@@ -63,7 +63,10 @@ def _match_region(geojson_name: str, db_regions: dict[str, dict]) -> dict | None
 async def get_geojson(
     level: str = Query(default="region", pattern="^(region|municipality)$"),
     region_id: int | None = Query(default=None),
+    metric: str = Query(default="population", pattern="^(population|change_percent)$"),
     year: int = Query(default=2022),
+    year_from: int | None = Query(default=None),
+    year_to: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     geo_dir = os.path.join(settings.data_dir, "geo")
@@ -84,7 +87,6 @@ async def get_geojson(
         result = await db.execute(query)
         db_regions = {r[1]: {"id": r[0], "name": r[1]} for r in result.all()}
 
-        # Aggregate population by region
         pop_query = (
             select(Municipality.region_id, func.sum(PopulationRecord.population))
             .join(Municipality)
@@ -94,7 +96,58 @@ async def get_geojson(
         pop_result = await db.execute(pop_query)
         region_pops = {row[0]: row[1] or 0 for row in pop_result.all()}
 
-        matched = 0
+        region_changes: dict[int, dict[str, float | int | None]] = {}
+        if metric == "change_percent":
+            start_year = year_from or 2010
+            end_year = year_to or year
+            if start_year > end_year:
+                start_year, end_year = end_year, start_year
+
+            start_subquery = (
+                select(
+                    Municipality.region_id.label("region_id"),
+                    func.sum(PopulationRecord.population).label("population_start"),
+                )
+                .join(Municipality)
+                .where(PopulationRecord.year == start_year)
+                .group_by(Municipality.region_id)
+                .subquery()
+            )
+            end_subquery = (
+                select(
+                    Municipality.region_id.label("region_id"),
+                    func.sum(PopulationRecord.population).label("population_end"),
+                )
+                .join(Municipality)
+                .where(PopulationRecord.year == end_year)
+                .group_by(Municipality.region_id)
+                .subquery()
+            )
+
+            change_result = await db.execute(
+                select(
+                    Region.id,
+                    start_subquery.c.population_start,
+                    end_subquery.c.population_end,
+                    (
+                        (end_subquery.c.population_end - start_subquery.c.population_start) * 100.0
+                        / func.nullif(start_subquery.c.population_start, 0)
+                    ).label("change_percent"),
+                )
+                .join(start_subquery, Region.id == start_subquery.c.region_id)
+                .join(end_subquery, Region.id == end_subquery.c.region_id)
+            )
+            region_changes = {
+                row[0]: {
+                    "population_start": row[1],
+                    "population_end": row[2],
+                    "change_percent": round(float(row[3]), 2) if row[3] is not None else None,
+                    "year_from": start_year,
+                    "year_to": end_year,
+                }
+                for row in change_result.all()
+            }
+
         for feature in geojson.get("features", []):
             props = feature.get("properties", {})
             geojson_name = props.get("name", "")
@@ -103,9 +156,21 @@ async def get_geojson(
                 props["db_id"] = region["id"]
                 props["db_name"] = region["name"]
                 props["population"] = region_pops.get(region["id"], 0)
-                matched += 1
+                if metric == "change_percent":
+                    change_data = region_changes.get(region["id"], {})
+                    props["population_start"] = change_data.get("population_start")
+                    props["population_end"] = change_data.get("population_end")
+                    props["change_percent"] = change_data.get("change_percent")
+                    props["year_from"] = change_data.get("year_from")
+                    props["year_to"] = change_data.get("year_to")
             else:
                 props["population"] = 0
+                if metric == "change_percent":
+                    props["population_start"] = None
+                    props["population_end"] = None
+                    props["change_percent"] = None
+                    props["year_from"] = year_from
+                    props["year_to"] = year_to
 
     return geojson
 

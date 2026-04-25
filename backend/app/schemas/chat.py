@@ -9,3 +9,4 @@ class ChatMessage(BaseModel):
 class AIInsightRequest(BaseModel):
     municipality_id: int | None = None
     region_id: int | None = None
+    year: int | None = None

@@ -3,6 +3,7 @@ import FilterBar from '@/components/dashboard/FilterBar'
 import KPICards from '@/components/dashboard/KPICards'
 import PopulationChart from '@/components/dashboard/PopulationChart'
 import DemographicsChart from '@/components/dashboard/DemographicsChart'
+import DriversChart from '@/components/dashboard/DriversChart'
 import RankingTables from '@/components/dashboard/RankingTables'
 
 export default function DashboardPage() {
@@ -15,6 +16,7 @@ export default function DashboardPage() {
       <KPICards />
       <PopulationChart />
       <DemographicsChart />
+      <DriversChart />
       <RankingTables />
     </div>
   )
