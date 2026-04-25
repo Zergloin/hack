@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.report import Report
 from app.schemas.report import ReportGenerateRequest, ReportOut
-from app.services.report_service import export_docx, export_pdf, generate_report
+from app.services.report_service import PDFExportError, export_docx, export_pdf, generate_report
 
 router = APIRouter()
 
@@ -41,7 +41,10 @@ async def export_report(
         raise HTTPException(status_code=404, detail="Report not found")
 
     if format == "pdf":
-        pdf_bytes = export_pdf(report.content_html or report.content_markdown)
+        try:
+            pdf_bytes = export_pdf(report.content_html, report.content_markdown)
+        except PDFExportError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",

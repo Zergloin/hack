@@ -20,5 +20,6 @@ class MunicipalityOut(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     area_sq_km: float | None = None
+    population: int | None = None
 
     model_config = {"from_attributes": True}

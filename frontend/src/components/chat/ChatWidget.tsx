@@ -138,9 +138,13 @@ export default function ChatWidget() {
             <br />
             Примеры:
             <br />
-            «Какое население Москвы?»
+            «Какое население было в Татарстане в 2017 году?»
             <br />
-            «Какие регионы растут быстрее всего?»
+            «Как изменилось население Татарстана с 2010 по 2022 год?»
+            <br />
+            «Какие регионы росли быстрее всего?»
+            <br />
+            «Сравни Татарстан и Башкортостан по рождаемости за 2019-2022 годы»
           </div>
         )}
         {messages.map((msg, i) => (
@@ -173,7 +177,7 @@ export default function ChatWidget() {
       {/* Input */}
       <div style={{ padding: '12px 16px', borderTop: '1px solid #e2e8f0' }}>
         <Input
-          placeholder="Введите вопрос..."
+          placeholder="Например: население Татарстана в 2017 году"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onPressEnter={handleSend}

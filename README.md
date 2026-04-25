@@ -5,7 +5,7 @@
 ## Стек
 
 - Backend: FastAPI, SQLAlchemy Async, PostgreSQL или SQLite, Pydantic.
-- Frontend: React, Vite, TypeScript, Ant Design, ECharts, Leaflet.
+- Frontend: React, Vite, TypeScript, Ant Design, ECharts, Yandex Maps JS API.
 - Data: CSV с муниципальной демографией и GeoJSON для карты.
 - Optional AI: LLM-интеграция для чата и отчетов через OpenAI/OpenRouter-совместимый API.
 
@@ -91,7 +91,7 @@ Swagger будет доступен на http://localhost:8000/docs.
 ```bash
 cd frontend
 npm install
-VITE_API_URL=http://localhost:8000 npm run dev
+VITE_API_URL=http://localhost:8000 VITE_YANDEX_MAPS_API_KEY=your_key npm run dev
 ```
 
 Frontend будет доступен на http://localhost:5173.
@@ -110,6 +110,7 @@ Frontend будет доступен на http://localhost:5173.
 - `LLM_MODEL` - модель для чата и отчетов.
 - `LLM_BASE_URL` - base URL для OpenAI-compatible API.
 - `VITE_API_URL` - адрес backend при локальном запуске frontend через Vite.
+- `VITE_YANDEX_MAPS_API_KEY` - ключ JS API Яндекс Карт для фронтенда. Для v3 нужен ключ с ограничением по `HTTP Referer`.
 
 Файл `.env` игнорируется git. В репозиторий должен попадать только `.env.example`.
 

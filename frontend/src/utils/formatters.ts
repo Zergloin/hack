@@ -20,3 +20,9 @@ export function formatRate(value: number | null | undefined): string {
   if (value == null) return '—'
   return `${value.toFixed(1)}\u2030`
 }
+
+export function formatDelta(value: number | null | undefined, suffix = ''): string {
+  if (value == null) return '—'
+  const sign = value > 0 ? '+' : value < 0 ? '' : ''
+  return `${sign}${value.toLocaleString('ru-RU')}${suffix}`
+}
