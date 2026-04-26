@@ -30,17 +30,31 @@ export default function ForecastView() {
     onError: () => message.error('Ошибка генерации прогноза'),
   })
 
+  const historicalYears = forecastData?.historical.map((h) => h.year) ?? []
+  const forecastYears = forecastData?.forecast.map((f) => f.year) ?? []
+  const historicalValues = forecastData?.historical.map((h) => h.population) ?? []
+  const forecastValues = forecastData?.forecast.map((f) => f.predicted_population) ?? []
+  const lowerBounds = forecastData?.forecast.map((f) => f.confidence_lower) ?? []
+  const upperBounds = forecastData?.forecast.map((f) => f.confidence_upper) ?? []
+  const intervalWidths = forecastData?.forecast.map((f) => {
+    if (f.confidence_lower == null || f.confidence_upper == null) {
+      return null
+    }
+
+    return f.confidence_upper - f.confidence_lower
+  }) ?? []
+
   const chartOption = forecastData
     ? {
         tooltip: { trigger: 'axis' as const },
-        legend: { top: 0 },
+        legend: {
+          top: 0,
+          data: ['Факт', 'Прогноз', 'CI нижняя', 'CI верхняя'],
+        },
         grid: { left: 70, right: 30, top: 50, bottom: 30 },
         xAxis: {
           type: 'category' as const,
-          data: [
-            ...forecastData.historical.map((h) => h.year),
-            ...forecastData.forecast.map((f) => f.year),
-          ],
+          data: [...historicalYears, ...forecastYears],
           axisLabel: { interval: 2 },
         },
         yAxis: {
@@ -55,48 +69,80 @@ export default function ForecastView() {
             name: 'Факт',
             type: 'line',
             data: [
-              ...forecastData.historical.map((h) => h.population),
-              ...forecastData.forecast.map(() => null),
+              ...historicalValues,
+              ...forecastValues.map(() => null),
             ],
             lineStyle: { width: 3, color: '#2b6cb0' },
             itemStyle: { color: '#2b6cb0' },
             smooth: true,
+            showSymbol: false,
           },
           {
             name: 'Прогноз',
             type: 'line',
             data: [
-              ...forecastData.historical.map(() => null),
-              ...forecastData.forecast.map((f) => f.predicted_population),
+              ...historicalValues.map(() => null),
+              ...forecastValues,
             ],
             lineStyle: { width: 3, type: 'dashed' as const, color: '#d69e2e' },
             itemStyle: { color: '#d69e2e' },
             smooth: true,
-          },
-          {
-            name: 'Доверительный интервал',
-            type: 'line',
-            data: [
-              ...forecastData.historical.map(() => null),
-              ...forecastData.forecast.map((f) => f.confidence_upper),
-            ],
-            lineStyle: { width: 0 },
-            itemStyle: { color: 'transparent' },
-            stack: 'ci',
-            symbol: 'none',
+            showSymbol: false,
           },
           {
             name: 'CI нижняя',
             type: 'line',
             data: [
-              ...forecastData.historical.map(() => null),
-              ...forecastData.forecast.map((f) => f.confidence_lower),
+              ...historicalValues.map(() => null),
+              ...lowerBounds,
+            ],
+            lineStyle: { width: 1.5, type: 'dashed' as const, color: '#d69e2e88' },
+            itemStyle: { color: '#d69e2e88' },
+            symbol: 'none',
+            z: 1,
+          },
+          {
+            name: 'CI верхняя',
+            type: 'line',
+            data: [
+              ...historicalValues.map(() => null),
+              ...upperBounds,
+            ],
+            lineStyle: { width: 1.5, type: 'dashed' as const, color: '#d69e2e88' },
+            itemStyle: { color: '#d69e2e88' },
+            symbol: 'none',
+            z: 1,
+          },
+          {
+            name: 'CI база',
+            type: 'line',
+            data: [
+              ...historicalValues.map(() => null),
+              ...lowerBounds,
+            ],
+            lineStyle: { width: 0 },
+            itemStyle: { color: 'transparent' },
+            stack: 'ci',
+            symbol: 'none',
+            tooltip: { show: false },
+            emphasis: { disabled: true },
+            z: 0,
+          },
+          {
+            name: 'Доверительный интервал',
+            type: 'line',
+            data: [
+              ...historicalValues.map(() => null),
+              ...intervalWidths,
             ],
             lineStyle: { width: 0 },
             itemStyle: { color: 'transparent' },
             areaStyle: { color: '#d69e2e', opacity: 0.15 },
             stack: 'ci',
             symbol: 'none',
+            tooltip: { show: false },
+            emphasis: { disabled: true },
+            z: 0,
           },
         ],
         animationDuration: 1000,

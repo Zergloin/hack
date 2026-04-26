@@ -59,11 +59,17 @@ def _match_region(geojson_name: str, db_regions: dict[str, dict]) -> dict | None
     return None
 
 
+def _calculate_density(population: int | None, area_sq_km: float | None) -> float | None:
+    if population is None or area_sq_km is None or area_sq_km <= 0:
+        return None
+    return round(float(population) / float(area_sq_km), 2)
+
+
 @router.get("/geojson")
 async def get_geojson(
     level: str = Query(default="region", pattern="^(region|municipality)$"),
     region_id: int | None = Query(default=None),
-    metric: str = Query(default="population", pattern="^(population|change_percent)$"),
+    metric: str = Query(default="density", pattern="^(population|density|change_percent)$"),
     year: int = Query(default=2022),
     year_from: int | None = Query(default=None),
     year_to: int | None = Query(default=None),
@@ -87,14 +93,25 @@ async def get_geojson(
         result = await db.execute(query)
         db_regions = {r[1]: {"id": r[0], "name": r[1]} for r in result.all()}
 
-        pop_query = (
-            select(Municipality.region_id, func.sum(PopulationRecord.population))
+        stats_query = (
+            select(
+                Municipality.region_id,
+                func.sum(PopulationRecord.population).label("population"),
+                func.sum(Municipality.area_sq_km).label("area_sq_km"),
+            )
             .join(Municipality)
             .where(PopulationRecord.year == year)
             .group_by(Municipality.region_id)
         )
-        pop_result = await db.execute(pop_query)
-        region_pops = {row[0]: row[1] or 0 for row in pop_result.all()}
+        stats_result = await db.execute(stats_query)
+        region_stats = {
+            row[0]: {
+                "population": row[1] or 0,
+                "area_sq_km": float(row[2]) if row[2] is not None else None,
+                "density": _calculate_density(row[1], float(row[2]) if row[2] is not None else None),
+            }
+            for row in stats_result.all()
+        }
 
         region_changes: dict[int, dict[str, float | int | None]] = {}
         if metric == "change_percent":
@@ -153,9 +170,12 @@ async def get_geojson(
             geojson_name = props.get("name", "")
             region = _match_region(geojson_name, db_regions)
             if region:
+                stats = region_stats.get(region["id"], {})
                 props["db_id"] = region["id"]
                 props["db_name"] = region["name"]
-                props["population"] = region_pops.get(region["id"], 0)
+                props["population"] = stats.get("population", 0)
+                props["area_sq_km"] = stats.get("area_sq_km")
+                props["density"] = stats.get("density")
                 if metric == "change_percent":
                     change_data = region_changes.get(region["id"], {})
                     props["population_start"] = change_data.get("population_start")
@@ -165,6 +185,8 @@ async def get_geojson(
                     props["year_to"] = change_data.get("year_to")
             else:
                 props["population"] = 0
+                props["area_sq_km"] = None
+                props["density"] = None
                 if metric == "change_percent":
                     props["population_start"] = None
                     props["population_end"] = None
@@ -185,7 +207,8 @@ async def get_density_data(
             Region.id,
             Region.code,
             Region.name,
-            func.sum(PopulationRecord.population),
+            func.sum(PopulationRecord.population).label("population"),
+            func.sum(Municipality.area_sq_km).label("area_sq_km"),
         )
         .select_from(PopulationRecord)
         .join(Municipality, PopulationRecord.municipality_id == Municipality.id)
@@ -195,6 +218,13 @@ async def get_density_data(
     )
     result = await db.execute(query)
     return [
-        {"id": row[0], "code": row[1], "name": row[2], "population": row[3] or 0}
+        {
+            "id": row[0],
+            "code": row[1],
+            "name": row[2],
+            "population": row[3] or 0,
+            "area_sq_km": float(row[4]) if row[4] is not None else None,
+            "density": _calculate_density(row[3], float(row[4]) if row[4] is not None else None),
+        }
         for row in result.all()
     ]

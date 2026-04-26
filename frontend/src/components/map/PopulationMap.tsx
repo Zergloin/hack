@@ -6,8 +6,8 @@ import type { DrawingStyle, YMap, YMapFeature, YMapFeatureProps, YMapLocationReq
 import { fetchMapGeoJSON, fetchMunicipalitiesByRegion } from '@/api/population'
 import { getAIInsight } from '@/api/chat'
 import { loadYandexMapsApi } from '@/lib/yandexMaps'
-import { getGrowthColor, getPopulationColor } from '@/utils/colors'
-import { formatPopulation } from '@/utils/formatters'
+import { getDensityColor, getGrowthColor } from '@/utils/colors'
+import { formatArea, formatDensity, formatPopulation } from '@/utils/formatters'
 
 const DEFAULT_LOCATION: YMapLocationRequest = {
   center: [95, 62],
@@ -20,7 +20,7 @@ const MAP_YEARS = Array.from({ length: 13 }, (_, index) => 2022 - index)
 const PERIOD_YEARS = [...MAP_YEARS].sort((left, right) => left - right)
 
 type MapLevel = 'region' | 'municipality'
-type MapMetric = 'population' | 'change_percent'
+type MapMetric = 'density' | 'change_percent'
 type MapBounds = [[number, number], [number, number]]
 type MapPoint = [number, number]
 type PolygonCoordinates = MapPoint[][]
@@ -32,6 +32,8 @@ type RegionProperties = {
   name?: string
   NAME_1?: string
   population?: number
+  density?: number | null
+  area_sq_km?: number | null
   population_start?: number | null
   population_end?: number | null
   change_percent?: number | null
@@ -55,6 +57,8 @@ type RegionSelection = {
   key: string
   name: string
   population: number
+  density: number | null
+  areaSqKm: number | null
   populationStart: number | null
   populationEnd: number | null
   changePercent: number | null
@@ -86,6 +90,14 @@ function getRegionName(properties: RegionProperties) {
 
 function getRegionPopulation(properties: RegionProperties) {
   return typeof properties.population === 'number' ? properties.population : 0
+}
+
+function getRegionDensity(properties: RegionProperties) {
+  return typeof properties.density === 'number' ? properties.density : null
+}
+
+function getRegionAreaSqKm(properties: RegionProperties) {
+  return typeof properties.area_sq_km === 'number' ? properties.area_sq_km : null
 }
 
 function getRegionPopulationStart(properties: RegionProperties) {
@@ -289,6 +301,8 @@ function toRegionSelection(properties: RegionProperties, geometry: MapFeature['g
     key: getRegionKey(properties, fallback),
     name: getRegionName(properties),
     population: getRegionPopulation(properties),
+    density: getRegionDensity(properties),
+    areaSqKm: getRegionAreaSqKm(properties),
     populationStart: getRegionPopulationStart(properties),
     populationEnd: getRegionPopulationEnd(properties),
     changePercent: getRegionChangePercent(properties),
@@ -383,7 +397,10 @@ function getFeatureStyle(
     }
   }
 
-  if (mapMetric === 'change_percent' && region.changePercent == null) {
+  if (
+    (mapMetric === 'change_percent' && region.changePercent == null)
+    || (mapMetric === 'density' && region.density == null)
+  ) {
     return {
       fill: '#d9d9d9',
       fillOpacity: selected ? 0.72 : hovered ? 0.58 : 0.44,
@@ -401,7 +418,7 @@ function getFeatureStyle(
   }
 
   return {
-    fill: mapMetric === 'change_percent' ? getGrowthColor(region.changePercent ?? 0) : getPopulationColor(region.population),
+    fill: mapMetric === 'change_percent' ? getGrowthColor(region.changePercent ?? 0) : getDensityColor(region.density ?? 0),
     fillOpacity: selected ? 0.82 : hovered ? 0.72 : mapLevel === 'municipality' ? 0.4 : 0.58,
     stroke: [
       {
@@ -430,13 +447,13 @@ export default function PopulationMap() {
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState('')
   const [mapLevel, setMapLevel] = useState<MapLevel>('region')
-  const [mapMetric, setMapMetric] = useState<MapMetric>('population')
+  const [mapMetric, setMapMetric] = useState<MapMetric>('density')
   const [selectedYear, setSelectedYear] = useState(2022)
   const [yearFrom, setYearFrom] = useState(2010)
   const [yearTo, setYearTo] = useState(2022)
 
   const apiKey = import.meta.env.VITE_YANDEX_MAPS_API_KEY?.trim() || ''
-  const displayYear = mapMetric === 'population' ? selectedYear : yearTo
+  const displayYear = mapMetric === 'density' ? selectedYear : yearTo
 
   const { data: geojson, isLoading } = useQuery<FeatureCollection>({
     queryKey: ['map-geojson', 'region', mapMetric, displayYear, yearFrom, yearTo],
@@ -471,6 +488,8 @@ export default function PopulationMap() {
           if (
             current?.key === nextSelectedRegion.key &&
             current.population === nextSelectedRegion.population &&
+            current.density === nextSelectedRegion.density &&
+            current.areaSqKm === nextSelectedRegion.areaSqKm &&
             current.populationStart === nextSelectedRegion.populationStart &&
             current.populationEnd === nextSelectedRegion.populationEnd &&
             current.changePercent === nextSelectedRegion.changePercent &&
@@ -494,6 +513,8 @@ export default function PopulationMap() {
           if (
             current?.key === nextHoveredRegion.key &&
             current.population === nextHoveredRegion.population &&
+            current.density === nextHoveredRegion.density &&
+            current.areaSqKm === nextHoveredRegion.areaSqKm &&
             current.populationStart === nextHoveredRegion.populationStart &&
             current.populationEnd === nextHoveredRegion.populationEnd &&
             current.changePercent === nextHoveredRegion.changePercent &&
@@ -770,7 +791,7 @@ export default function PopulationMap() {
               <Segmented
                 block
                 options={[
-                  { label: 'Население', value: 'population' },
+                  { label: 'Плотность', value: 'density' },
                   { label: 'Динамика, %', value: 'change_percent' },
                 ]}
                 value={mapMetric}
@@ -778,7 +799,7 @@ export default function PopulationMap() {
               />
             </div>
             <div>
-              {mapMetric === 'population' ? (
+              {mapMetric === 'density' ? (
                 <>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>Год</div>
                   <Select
@@ -835,8 +856,8 @@ export default function PopulationMap() {
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {mapLevel === 'region'
-                ? mapMetric === 'population'
-                  ? 'Хлороплет по населению регионов.'
+                ? mapMetric === 'density'
+                  ? 'Хлороплет по плотности населения регионов.'
                   : `Хлороплет изменения населения за период ${yearFrom}–${yearTo}.`
                 : 'Выберите регион на карте: карта перейдёт в drill-down, а справа откроется список муниципалитетов.'}
             </Typography.Text>
@@ -887,22 +908,32 @@ export default function PopulationMap() {
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{hoveredRegion.name}</div>
-          <div style={{ color: '#4a5568', fontSize: 12 }}>
-            {hoveredRegion.hasCoverage ? (
-              mapMetric === 'population' ? (
-                `Население (${selectedYear}): ${formatPopulation(hoveredRegion.population)}`
-              ) : hoveredRegion.changePercent != null ? (
-                `Динамика ${hoveredRegion.yearFrom ?? yearFrom}–${hoveredRegion.yearTo ?? yearTo}: ${formatChangePercent(hoveredRegion.changePercent)}`
-              ) : (
-                'Для этого периода нет данных о динамике населения'
-              )
-            ) : (
-              'Для этого полигона нет демографических данных в текущем наборе'
-            )}
-          </div>
-          {mapMetric === 'change_percent' && hoveredRegion.populationStart != null && hoveredRegion.populationEnd != null && (
-            <div style={{ color: '#718096', fontSize: 12, marginTop: 4 }}>
-              {formatPopulation(hoveredRegion.populationStart)} → {formatPopulation(hoveredRegion.populationEnd)}
+          {hoveredRegion.hasCoverage ? (
+            <>
+              <div style={{ color: '#4a5568', fontSize: 12 }}>
+                {mapMetric === 'density'
+                  ? `Плотность (${selectedYear}): ${formatDensity(hoveredRegion.density)}`
+                  : hoveredRegion.changePercent != null
+                    ? `Динамика ${hoveredRegion.yearFrom ?? yearFrom}–${hoveredRegion.yearTo ?? yearTo}: ${formatChangePercent(hoveredRegion.changePercent)}`
+                    : 'Для этого периода нет данных о динамике населения'}
+              </div>
+              <div style={{ color: '#4a5568', fontSize: 12, marginTop: 4 }}>
+                {`Население (${displayYear}): ${formatPopulation(hoveredRegion.population)}`}
+              </div>
+              {mapMetric === 'change_percent' && (
+                <div style={{ color: '#718096', fontSize: 12, marginTop: 4 }}>
+                  {`Плотность (${displayYear}): ${formatDensity(hoveredRegion.density)}`}
+                </div>
+              )}
+              {mapMetric === 'change_percent' && hoveredRegion.populationStart != null && hoveredRegion.populationEnd != null && (
+                <div style={{ color: '#718096', fontSize: 12, marginTop: 4 }}>
+                  {formatPopulation(hoveredRegion.populationStart)} → {formatPopulation(hoveredRegion.populationEnd)}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ color: '#4a5568', fontSize: 12 }}>
+              Для этого полигона нет демографических данных в текущем наборе
             </div>
           )}
         </div>
@@ -964,17 +995,18 @@ export default function PopulationMap() {
         }}
       >
         <div style={{ fontWeight: 600, marginBottom: 8 }}>
-          {mapMetric === 'population' ? `Население, ${selectedYear}` : `Изменение населения, ${yearFrom}–${yearTo}`}
+          {mapMetric === 'density' ? `Плотность населения, ${selectedYear}` : `Изменение населения, ${yearFrom}–${yearTo}`}
         </div>
-        {(mapMetric === 'population'
+        {(mapMetric === 'density'
           ? [
-              { color: '#1a365d', label: '> 1 млн' },
-              { color: '#2b6cb0', label: '500К — 1М' },
-              { color: '#3182ce', label: '200К — 500К' },
-              { color: '#4299e1', label: '100К — 200К' },
-              { color: '#63b3ed', label: '50К — 100К' },
-              { color: '#90cdf4', label: '20К — 50К' },
-              { color: '#bee3f8', label: '< 20К' },
+              { color: '#4a0d18', label: '≥ 500 чел./км²' },
+              { color: '#7f1d1d', label: '100 — 500 чел./км²' },
+              { color: '#b91c1c', label: '50 — 100 чел./км²' },
+              { color: '#dc2626', label: '20 — 50 чел./км²' },
+              { color: '#ef4444', label: '10 — 20 чел./км²' },
+              { color: '#f87171', label: '5 — 10 чел./км²' },
+              { color: '#fca5a5', label: '1 — 5 чел./км²' },
+              { color: '#fee2e2', label: '< 1 чел./км²' },
               { color: '#d9d9d9', label: 'Нет покрытия данных' },
             ]
           : [
@@ -1005,19 +1037,32 @@ export default function PopulationMap() {
         {selectedRegion && (
           <>
             <Row gutter={[16, 16]}>
-              <Col span={selectedRegion.changePercent != null ? 12 : 24}>
+              <Col span={12}>
                 <Statistic
                   title={`Население, ${displayYear}`}
                   value={selectedRegion.hasCoverage ? formatPopulation(selectedRegion.population) : 'Нет данных'}
                 />
               </Col>
+              <Col span={12}>
+                <Statistic
+                  title={`Плотность, ${displayYear}`}
+                  value={selectedRegion.hasCoverage ? formatDensity(selectedRegion.density) : 'Нет данных'}
+                />
+              </Col>
               {selectedRegion.changePercent != null && (
-                <Col span={12}>
+                <Col span={24}>
                   <Statistic
                     title={`Динамика, ${selectedRegion.yearFrom ?? yearFrom}–${selectedRegion.yearTo ?? yearTo}`}
                     value={formatChangePercent(selectedRegion.changePercent)}
                     valueStyle={{ color: getGrowthColor(selectedRegion.changePercent) }}
                   />
+                </Col>
+              )}
+              {selectedRegion.areaSqKm != null && (
+                <Col span={24}>
+                  <Typography.Text type="secondary">
+                    {`Площадь покрытия набора данных: ${formatArea(selectedRegion.areaSqKm)}`}
+                  </Typography.Text>
                 </Col>
               )}
               {selectedRegion.changePercent != null && selectedRegion.populationStart != null && selectedRegion.populationEnd != null && (
@@ -1084,9 +1129,16 @@ export default function PopulationMap() {
                           <div style={{ width: '100%' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                               <Typography.Text strong>{municipality.name}</Typography.Text>
-                              <Typography.Text>
-                                {municipality.population != null ? formatPopulation(municipality.population) : '—'}
-                              </Typography.Text>
+                              <div style={{ textAlign: 'right' }}>
+                                <Typography.Text>
+                                  {municipality.population != null ? formatPopulation(municipality.population) : '—'}
+                                </Typography.Text>
+                                <div style={{ marginTop: 4, color: '#718096', fontSize: 12 }}>
+                                  {municipality.population != null && municipality.area_sq_km
+                                    ? `Плотность: ${formatDensity(municipality.population / municipality.area_sq_km)}`
+                                    : 'Плотность: —'}
+                                </div>
+                              </div>
                             </div>
                             <div style={{ marginTop: 4, color: '#718096', fontSize: 12 }}>
                               {formatMunicipalityType(municipality.municipality_type)}

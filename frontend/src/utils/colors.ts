@@ -8,6 +8,17 @@ export function getPopulationColor(population: number): string {
   return '#bee3f8'
 }
 
+export function getDensityColor(density: number): string {
+  if (density >= 500) return '#4a0d18'
+  if (density >= 100) return '#7f1d1d'
+  if (density >= 50) return '#b91c1c'
+  if (density >= 20) return '#dc2626'
+  if (density >= 10) return '#ef4444'
+  if (density >= 5) return '#f87171'
+  if (density >= 1) return '#fca5a5'
+  return '#fee2e2'
+}
+
 export function getGrowthColor(percent: number): string {
   if (percent >= 10) return '#22543d'
   if (percent >= 5) return '#276749'

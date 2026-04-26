@@ -127,7 +127,7 @@ export const fetchDemographicsSummary = (params: {
 export const fetchMapGeoJSON = (params: {
   level?: 'region' | 'municipality'
   region_id?: number
-  metric?: 'population' | 'change_percent'
+  metric?: 'population' | 'density' | 'change_percent'
   year?: number
   year_from?: number
   year_to?: number
