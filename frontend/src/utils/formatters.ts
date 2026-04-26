@@ -16,6 +16,26 @@ export function formatPercent(value: number | null | undefined): string {
   return `${sign}${value.toFixed(1)}%`
 }
 
+export function formatDensity(value: number | null | undefined): string {
+  if (value == null) return '—'
+
+  const fractionDigits = value < 1 ? 2 : value < 10 ? 1 : value < 100 ? 1 : 0
+  return `${value.toLocaleString('ru-RU', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })} чел./км²`
+}
+
+export function formatArea(value: number | null | undefined): string {
+  if (value == null) return '—'
+
+  const fractionDigits = value >= 1_000 ? 0 : value >= 100 ? 1 : 2
+  return `${value.toLocaleString('ru-RU', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: fractionDigits,
+  })} км²`
+}
+
 export function formatRate(value: number | null | undefined): string {
   if (value == null) return '—'
   return `${value.toFixed(1)}\u2030`

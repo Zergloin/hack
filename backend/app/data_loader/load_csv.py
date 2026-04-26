@@ -1,6 +1,8 @@
 """
-Load real demographic data from tochno.st CSV into the database.
-CSV format: oktmo;not_zato;region;mun_type;municipality;year;population;average_population;deaths;births;migration;mortality_rate;birth_rate;migration_rate
+Load real demographic data from CSV into the database.
+CSV format:
+oktmo;not_zato;region;mun_type;municipality;year;population;average_population;
+deaths;births;migration;mortality_rate;birth_rate;migration_rate;area
 """
 
 import csv
@@ -148,13 +150,31 @@ def _find_csv_file() -> Path | None:
         if not csv_dir.exists():
             continue
 
-        files = sorted(
+        preferred_file = csv_dir / "data.csv"
+        if preferred_file.is_file():
+            return preferred_file
+
+        demography_files = sorted(
             p for p in csv_dir.iterdir()
             if p.is_file() and p.suffix == ".csv" and "demography" in p.name.lower()
         )
-        if files:
-            return files[0]
+        if demography_files:
+            return demography_files[0]
+
+        any_csv_files = sorted(
+            p for p in csv_dir.iterdir()
+            if p.is_file() and p.suffix == ".csv"
+        )
+        if any_csv_files:
+            return any_csv_files[0]
     return None
+
+
+def _hectares_to_sq_km(val: str | None) -> float | None:
+    hectares = _safe_float(val)
+    if hectares is None:
+        return None
+    return round(hectares / 100, 4)
 
 
 def _read_csv_data(
@@ -164,7 +184,7 @@ def _read_csv_data(
     municipalities: dict[str, dict] = {}
     rows_data: list[dict] = []
 
-    with csv_file.open("r", encoding="utf-8") as f:
+    with csv_file.open("r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
         required_columns = {
             "oktmo",
@@ -189,6 +209,7 @@ def _read_csv_data(
             region_name = row["region"].strip()
             oktmo = row["oktmo"].strip()
             region_code = oktmo[:2] if len(oktmo) >= 2 else ""
+            area_sq_km = _hectares_to_sq_km(row.get("area"))
 
             if region_name not in regions:
                 regions[region_name] = {
@@ -202,7 +223,10 @@ def _read_csv_data(
                     "name": row["municipality"].strip(),
                     "type": MUN_TYPE_MAP.get(mun_type, mun_type),
                     "region": region_name,
+                    "area_sq_km": area_sq_km,
                 }
+            elif municipalities[oktmo].get("area_sq_km") is None and area_sq_km is not None:
+                municipalities[oktmo]["area_sq_km"] = area_sq_km
 
             rows_data.append(row)
 
@@ -211,6 +235,14 @@ def _read_csv_data(
 
 async def _row_count(db, model) -> int:
     result = await db.execute(select(func.count(model.id)))
+    return int(result.scalar_one())
+
+
+async def _municipality_area_count(db) -> int:
+    result = await db.execute(
+        select(func.count(Municipality.id))
+        .where(Municipality.area_sq_km.is_not(None))
+    )
     return int(result.scalar_one())
 
 
@@ -238,16 +270,21 @@ async def load_csv_data(force_reload: bool = False):
     csv_population_rows = sum(
         1 for row in rows_data if _safe_int(row.get("population")) is not None
     )
+    csv_area_municipalities = sum(
+        1 for municipality in municipalities_data.values() if municipality.get("area_sq_km") is not None
+    )
 
     async with async_session() as db:
         existing_regions = await _row_count(db, Region)
         existing_municipalities = await _row_count(db, Municipality)
         existing_population = await _row_count(db, PopulationRecord)
+        existing_area_municipalities = await _municipality_area_count(db)
 
         if existing_regions and not force_reload:
             looks_loaded = (
                 existing_municipalities >= len(municipalities_data)
                 and existing_population >= csv_population_rows
+                and existing_area_municipalities >= csv_area_municipalities
             )
             if looks_loaded:
                 print("Database already populated with CSV data.")
@@ -294,6 +331,7 @@ async def load_csv_data(force_reload: bool = False):
                 name=minfo["name"],
                 municipality_type=minfo["type"],
                 region_id=region.id,
+                area_sq_km=minfo.get("area_sq_km"),
             )
             db.add(m)
             muni_db_map[oktmo] = m
