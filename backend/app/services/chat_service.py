@@ -18,10 +18,11 @@ from app.models.demographics import DemographicIndicator
 from app.models.municipality import Municipality
 from app.models.population import PopulationRecord
 from app.models.region import Region
+from app.services.forecast_service import get_forecast_snapshot, get_scope_forecast
 from app.services.llm import get_llm
 
 ScopeType = Literal["country", "region", "municipality"]
-IntentType = Literal["metric_value", "trend", "ranking", "compare", "summary", "unsupported"]
+IntentType = Literal["metric_value", "trend", "ranking", "compare", "summary", "forecast", "unsupported"]
 RankingDimension = Literal["regions", "municipalities"]
 
 YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
@@ -62,6 +63,10 @@ MUNICIPALITY_STOPWORDS = {
 DOMAIN_KEYWORDS = [
     "насел",
     "демограф",
+    "прогноз",
+    "будет",
+    "будущ",
+    "ожида",
     "рождаем",
     "смерт",
     "миграц",
@@ -124,6 +129,8 @@ class QueryPlan:
     ranking_dimension: RankingDimension = "regions"
     order: Literal["asc", "desc"] = "desc"
     limit: int = 5
+    horizon_years: int | None = None
+    target_year: int | None = None
     reasoning: str = ""
 
 
@@ -258,6 +265,13 @@ def _format_metric_value(metric: str, value: float | int | None) -> str:
     return f"{number} {spec.unit}" if value is not None else "нет данных"
 
 
+def _format_percent_change(value: float | None) -> str:
+    if value is None:
+        return "нет данных"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
+
+
 def _chunk_text(text: str, chunk_size: int = STREAM_CHUNK_SIZE) -> list[str]:
     if len(text) <= chunk_size:
         return [text]
@@ -303,6 +317,23 @@ def _extract_limit(question_normalized: str) -> int:
         return max(1, min(int(numeric_match.group(1)), 20))
 
     return 5
+
+
+def _extract_forecast_horizon(
+    question_normalized: str,
+    years: list[int],
+    latest_population_year: int,
+) -> tuple[int | None, int | None]:
+    relative_match = re.search(r"(?:через|на|в ближайшие)\s+(\d{1,2})\s+лет", question_normalized)
+    if relative_match:
+        horizon_years = max(1, min(int(relative_match.group(1)), 15))
+        return horizon_years, latest_population_year + horizon_years
+
+    target_year = next((year for year in sorted(years, reverse=True) if year > latest_population_year), None)
+    if target_year is not None:
+        return max(1, min(target_year - latest_population_year, 15)), target_year
+
+    return None, None
 
 
 def _detect_metric(question_normalized: str) -> str | None:
@@ -465,6 +496,12 @@ def _merge_with_thread_context(plan: QueryPlan, thread_id: str | None) -> QueryP
         if plan.year_to is None and previous.year_to is not None:
             plan.year_to = previous.year_to
 
+    if plan.intent == "forecast":
+        if plan.horizon_years is None and previous.horizon_years is not None:
+            plan.horizon_years = previous.horizon_years
+        if plan.target_year is None and previous.target_year is not None:
+            plan.target_year = previous.target_year
+
     return plan
 
 
@@ -489,13 +526,24 @@ async def _build_query_plan(db: AsyncSession, question: str, thread_id: str | No
     metric = _detect_metric(question_normalized)
     scope_matches = await _resolve_scopes(db, question_normalized)
     scope = _pick_primary_scope(scope_matches)
+    latest_population_year = await _latest_year_for_metric(db, "population")
 
     ranking_keywords = ["топ", "лидер", "быстрее всего", "наибольш", "максимальн", "убыль", "рост"]
     trend_keywords = ["динам", "измен", "тренд", "за период", "с ", "по "]
     compare_keywords = ["сравни", "сравнить", "сравнение", "срав", "у кого", "что выше", "кто выше", "чем отличается"]
+    forecast_keywords = ["прогноз", "спрогноз", "будет", "ожидается", "ожидаем", "через"]
     ranking_requested = any(keyword in question_normalized for keyword in ranking_keywords)
     trend_requested = len(years) >= 2 or any(keyword in question_normalized for keyword in trend_keywords)
     compare_requested = any(keyword in question_normalized for keyword in compare_keywords)
+    horizon_years, target_year = _extract_forecast_horizon(
+        question_normalized,
+        years,
+        latest_population_year,
+    )
+    forecast_requested = (
+        any(keyword in question_normalized for keyword in forecast_keywords)
+        or target_year is not None
+    )
 
     if compare_requested:
         compare_scopes = _select_compare_scopes(scope_matches)
@@ -530,6 +578,23 @@ async def _build_query_plan(db: AsyncSession, question: str, thread_id: str | No
             reasoning="ranking",
         )
         return _merge_with_thread_context(plan, thread_id)
+
+    if forecast_requested and (metric in {None, "population"}):
+        plan = QueryPlan(
+            intent="forecast",
+            metric="population",
+            scope_type=scope.scope_type if scope else None,
+            scope_id=scope.scope_id if scope else None,
+            scope_name=scope.scope_name if scope else None,
+            horizon_years=horizon_years or 5,
+            target_year=target_year,
+            reasoning="forecast",
+        )
+        plan = _merge_with_thread_context(plan, thread_id)
+        if plan.scope_type is None:
+            plan.scope_type = "country"
+            plan.scope_name = "Россия"
+        return plan
 
     if metric or scope:
         if trend_requested:
@@ -572,6 +637,18 @@ async def _build_query_plan(db: AsyncSession, question: str, thread_id: str | No
 
     if years and thread_id and thread_id in THREAD_CONTEXTS:
         previous = THREAD_CONTEXTS[thread_id]
+        future_year = next((year for year in sorted(years, reverse=True) if year > latest_population_year), None)
+        if previous.scope_type and future_year is not None:
+            return QueryPlan(
+                intent="forecast",
+                metric="population",
+                scope_type=previous.scope_type,
+                scope_id=previous.scope_id,
+                scope_name=previous.scope_name or "Россия",
+                horizon_years=max(1, min(future_year - latest_population_year, 15)),
+                target_year=future_year,
+                reasoning="thread_forecast_follow_up",
+            )
         if previous.intent == "compare" and previous.scopes:
             return QueryPlan(
                 intent="compare",
@@ -1235,6 +1312,63 @@ async def _execute_compare_plan(db: AsyncSession, plan: QueryPlan) -> QueryResul
     )
 
 
+async def _execute_forecast_plan(db: AsyncSession, plan: QueryPlan) -> QueryResult:
+    scope_type = plan.scope_type or "country"
+    scope_name = plan.scope_name or "Россия"
+    horizon_years = max(1, min(plan.horizon_years or 5, 15))
+
+    forecast_result = await get_scope_forecast(
+        db,
+        scope_type,
+        plan.scope_id,
+        horizon_years=horizon_years,
+    )
+    if not forecast_result:
+        return QueryResult(
+            status="not_found",
+            plan=plan,
+            title="Прогноз не найден",
+            facts=[],
+            fallback_answer=(
+                f"Не удалось построить прогноз по населению для «{scope_name}». "
+                "Проверьте, что для этой территории есть исторический ряд населения."
+            ),
+        )
+
+    snapshot = get_forecast_snapshot(forecast_result, plan.target_year)
+    if not snapshot:
+        return QueryResult(
+            status="not_found",
+            plan=plan,
+            title="Прогноз не найден",
+            facts=[],
+            fallback_answer=f"Не удалось построить прогноз по населению для «{scope_name}».",
+        )
+
+    facts = [
+        f"Модель прогноза: {snapshot['model_name']}.",
+        f"Базовый фактический год: {snapshot['anchor_year']}, население — {_format_metric_value('population', snapshot['anchor_population'])}.",
+        f"Прогноз населения «{scope_name}» на {snapshot['target_year']} год: {_format_metric_value('population', snapshot['predicted_population'])}.",
+        f"Изменение к {snapshot['anchor_year']} году: {_format_metric_value('population', snapshot['absolute_change'])} ({_format_percent_change(snapshot['percent_change'])}).",
+        f"Доверительный интервал: {_format_metric_value('population', snapshot['confidence_lower'])} — {_format_metric_value('population', snapshot['confidence_upper'])}.",
+    ]
+    fallback_answer = (
+        f"По модели {snapshot['model_name']} прогноз населения «{scope_name}» на {snapshot['target_year']} год "
+        f"составляет {_format_metric_value('population', snapshot['predicted_population'])}. "
+        f"Это {_format_metric_value('population', snapshot['absolute_change'])} к уровню {snapshot['anchor_year']} года "
+        f"({_format_percent_change(snapshot['percent_change'])}). "
+        f"Доверительный интервал: {_format_metric_value('population', snapshot['confidence_lower'])} — "
+        f"{_format_metric_value('population', snapshot['confidence_upper'])}."
+    )
+    return QueryResult(
+        status="ok",
+        plan=plan,
+        title=f"Прогноз — {scope_name}",
+        facts=facts,
+        fallback_answer=fallback_answer,
+    )
+
+
 async def _execute_summary_plan(db: AsyncSession, plan: QueryPlan) -> QueryResult:
     scope_type = plan.scope_type or "country"
     scope_name = plan.scope_name or "Россия"
@@ -1283,6 +1417,8 @@ async def _execute_plan(db: AsyncSession, plan: QueryPlan) -> QueryResult:
         return await _execute_ranking_plan(db, plan)
     if plan.intent == "compare":
         return await _execute_compare_plan(db, plan)
+    if plan.intent == "forecast":
+        return await _execute_forecast_plan(db, plan)
     return await _execute_summary_plan(db, plan)
 
 
@@ -1394,6 +1530,22 @@ async def get_ai_insight(
             f"смертности — {_format_metric_value('death_rate', death_rate)}, "
             f"естественного прироста — {_format_metric_value('natural_growth_rate', natural_growth_rate)}."
         )
+        forecast_result = await get_scope_forecast(
+            db,
+            "municipality",
+            municipality_id,
+            horizon_years=5,
+            anchor_year=population_year,
+        )
+        forecast_snapshot = get_forecast_snapshot(forecast_result) if forecast_result else None
+        if forecast_snapshot:
+            context_parts.append(
+                f"По модели {forecast_snapshot['model_name']} прогноз населения на {forecast_snapshot['target_year']} год "
+                f"составляет {_format_metric_value('population', forecast_snapshot['predicted_population'])}; "
+                f"изменение к {forecast_snapshot['anchor_year']} году — "
+                f"{_format_metric_value('population', forecast_snapshot['absolute_change'])} "
+                f"({_format_percent_change(forecast_snapshot['percent_change'])})."
+            )
 
     elif region_id:
         region = await db.get(Region, region_id)
@@ -1426,6 +1578,22 @@ async def get_ai_insight(
             f"смертности — {_format_metric_value('death_rate', death_rate)}, "
             f"чистая миграция — {_format_metric_value('net_migration', migration)}."
         )
+        forecast_result = await get_scope_forecast(
+            db,
+            "region",
+            region_id,
+            horizon_years=5,
+            anchor_year=population_year,
+        )
+        forecast_snapshot = get_forecast_snapshot(forecast_result) if forecast_result else None
+        if forecast_snapshot:
+            context_parts.append(
+                f"По модели {forecast_snapshot['model_name']} прогноз населения на {forecast_snapshot['target_year']} год "
+                f"составляет {_format_metric_value('population', forecast_snapshot['predicted_population'])}; "
+                f"изменение к {forecast_snapshot['anchor_year']} году — "
+                f"{_format_metric_value('population', forecast_snapshot['absolute_change'])} "
+                f"({_format_percent_change(forecast_snapshot['percent_change'])})."
+            )
 
     if not context_parts:
         return "Выберите муниципалитет или регион для получения AI-инсайта."

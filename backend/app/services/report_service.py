@@ -16,15 +16,66 @@ from app.models.population import PopulationRecord
 from app.models.region import Region
 from app.models.report import Report
 from app.schemas.report import ReportGenerateRequest
+from app.services.forecast_service import get_forecast_snapshot, get_scope_forecast
 
 
 class PDFExportError(RuntimeError):
     """Raised when PDF export is unavailable or fails."""
 
 
+def _format_population(value: int | None) -> str:
+    if value is None:
+        return "нет данных"
+    return f"{int(value):,}".replace(",", " ")
+
+
+def _format_percent(value: float | None) -> str:
+    if value is None:
+        return "нет данных"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
+
+
+async def _append_forecast_context(
+    db: AsyncSession,
+    context_parts: list[str],
+    scope_type: str,
+    scope_id: int | None,
+    anchor_year: int | None,
+) -> None:
+    if scope_type not in {"country", "region", "municipality"}:
+        return
+
+    five_year = await get_scope_forecast(db, scope_type, scope_id, horizon_years=5, anchor_year=anchor_year)
+    ten_year = await get_scope_forecast(db, scope_type, scope_id, horizon_years=10, anchor_year=anchor_year)
+
+    snapshots = []
+    if five_year:
+        snapshots.append(get_forecast_snapshot(five_year))
+    if ten_year:
+        snapshots.append(get_forecast_snapshot(ten_year))
+
+    valid_snapshots = [snapshot for snapshot in snapshots if snapshot is not None]
+    if not valid_snapshots:
+        return
+
+    model_name = valid_snapshots[0]["model_name"]
+    context_parts.append(f"Прогноз модели ({model_name}):")
+    for snapshot in valid_snapshots:
+        context_parts.append(
+            "  "
+            f"База {snapshot['anchor_year']} -> прогноз на {snapshot['target_year']}: "
+            f"{_format_population(snapshot['predicted_population'])} чел. "
+            f"(изменение к базе: {_format_population(snapshot['absolute_change'])} чел., "
+            f"{_format_percent(snapshot['percent_change'])}; "
+            f"интервал: {_format_population(snapshot['confidence_lower'])}–{_format_population(snapshot['confidence_upper'])})."
+        )
+
+
 async def _gather_context(db: AsyncSession, request: ReportGenerateRequest) -> str:
     """Gather data context for LLM prompt."""
     context_parts = []
+    anchor_year = request.year_to
 
     if request.municipality_id:
         muni = await db.get(Municipality, request.municipality_id)
@@ -55,6 +106,7 @@ async def _gather_context(db: AsyncSession, request: ReportGenerateRequest) -> s
                     f"смертность={demos.death_rate}, ест.прирост={demos.natural_growth_rate}, "
                     f"миграция={demos.net_migration_rate}"
                 )
+            await _append_forecast_context(db, context_parts, "municipality", muni.id, anchor_year)
 
     elif request.region_id:
         region = await db.get(Region, request.region_id)
@@ -71,6 +123,20 @@ async def _gather_context(db: AsyncSession, request: ReportGenerateRequest) -> s
             pop_res = await db.execute(pop_q)
             for year, total in pop_res.all():
                 context_parts.append(f"  {year}: {total}")
+
+            await _append_forecast_context(db, context_parts, "region", region.id, anchor_year)
+    else:
+        context_parts.append("Масштаб: Россия")
+        pop_q = (
+            select(PopulationRecord.year, func.sum(PopulationRecord.population))
+            .group_by(PopulationRecord.year)
+            .order_by(PopulationRecord.year)
+        )
+        pop_res = await db.execute(pop_q)
+        for year, total in pop_res.all():
+            context_parts.append(f"  {year}: {total}")
+
+        await _append_forecast_context(db, context_parts, "country", None, anchor_year)
 
     return "\n".join(context_parts)
 

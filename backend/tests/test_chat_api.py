@@ -88,6 +88,29 @@ class ChatApiTests(unittest.TestCase):
         self.assertIn("10.38", answer)
         self.assertIn("9.84", answer)
 
+    def test_forecast_question_returns_model_prediction(self) -> None:
+        response = self.client.post(
+            "/api/v1/chat/message",
+            json={"message": "Какое население будет в Татарстане в 2028 году?", "thread_id": "t6"},
+        )
+        answer = _collect_sse_text(response.text)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("2028", answer)
+        self.assertIn("Татарстан", answer)
+        self.assertTrue("прогноз" in answer.lower() or "модел" in answer.lower())
+
+    def test_ai_insight_includes_forecast_context(self) -> None:
+        response = self.client.post(
+            "/api/v1/chat/insight",
+            json={"region_id": 1, "year": 2022},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        insight = response.json()["insight"]
+        self.assertIn("2027", insight)
+        self.assertTrue("прогноз" in insight.lower() or "модел" in insight.lower())
+
     def test_off_topic_question_is_rejected(self) -> None:
         response = self.client.post(
             "/api/v1/chat/message",
