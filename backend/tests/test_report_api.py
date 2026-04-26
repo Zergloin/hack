@@ -52,3 +52,19 @@ class ReportApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "PDF export is unavailable")
+
+    def test_generated_report_contains_forecast_context(self) -> None:
+        response = self.client.post(
+            "/api/v1/reports/generate",
+            json={
+                "report_type": "forecast",
+                "region_id": 1,
+                "year_from": 2017,
+                "year_to": 2022,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.json()["content_markdown"]
+        self.assertIn("Прогноз модели", content)
+        self.assertIn("2027", content)

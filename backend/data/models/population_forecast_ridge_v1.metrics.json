@@ -1,0 +1,30 @@
+{
+  "selection_backtest_2019_2023": {
+    "best_run": {
+      "rmse": 3152.0131137638814,
+      "mae": 1044.0724725563675,
+      "mape": 4.257314556745673,
+      "alpha": 5.0,
+      "shrink_weight": 0.75,
+      "score": 0.7848138326098737
+    },
+    "naive_baseline": {
+      "rmse": 4654.518189130381,
+      "mae": 1598.0937529895723,
+      "mape": 4.157844182189476
+    },
+    "selection_note": "alpha=5.0 and shrink=0.75 selected from the prior recursive search and retrained here on the full dataset"
+  },
+  "one_step_holdout": {
+    "valid_2020_2021": {
+      "rmse": 1201.881667431806,
+      "mae": 323.38556368381467,
+      "mape": 0.8562135200879165
+    },
+    "test_2022_2023": {
+      "rmse": 1689.661291736833,
+      "mae": 365.0033678090634,
+      "mape": 1.0615494056461876
+    }
+  }
+}
